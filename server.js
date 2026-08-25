@@ -106,10 +106,9 @@ async function startBot() {
 
   waSock.ev.on('messages.upsert', async (m) => {
     try {
-      if (m.type !== 'notify') return; // Procesar solo notificaciones en tiempo real
-
-      for (const msg of m.messages) {
-        if (!msg.message || msg.key.fromMe) continue; // Ignorar mensajes propios salientes
+      const messagesList = m.messages || [];
+      for (const msg of messagesList) {
+        if (!msg || !msg.message) continue;
 
         const from = msg.key.remoteJid;
         if (!from || from.endsWith('@g.us')) continue; // Ignorar grupos
@@ -120,14 +119,14 @@ async function startBot() {
 
         if (!userText) continue;
 
-        console.log(`💬 Mensaje entrante de ${from}: ${userText}`);
+        console.log(`💬 Mensaje [${msg.key.fromMe ? 'Saliente' : 'Entrante'}] de ${from}: ${userText}`);
 
-        // Generar respuesta de IA
-        const replyText = await generateAIReply(userText);
-
-        // Enviar respuesta por WhatsApp
-        await waSock.sendMessage(from, { text: replyText });
-        console.log(`✅ IA respondió con éxito a ${from}`);
+        // Responder si el mensaje viene del cliente (NO saliente propio)
+        if (!msg.key.fromMe) {
+          const replyText = await generateAIReply(userText);
+          await waSock.sendMessage(from, { text: replyText });
+          console.log(`✅ IA respondió con éxito a ${from}`);
+        }
       }
     } catch (err) {
       console.error('Error respondiendo mensaje:', err.message);
