@@ -10,7 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "mi_token_secreto_surva_social_2026";
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "1328789613640536";
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "1339480832575821";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let currentQR = '';
@@ -124,7 +124,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 async function sendMetaWhatsAppMessage(to, message) {
-  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || WHATSAPP_PHONE_NUMBER_ID;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || "1339480832575821";
   const token = process.env.META_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
   if (!token || !phoneId) return;
   try {
