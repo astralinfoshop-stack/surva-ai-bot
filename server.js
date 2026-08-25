@@ -14,18 +14,19 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let currentQR = '';
 let isConnected = false;
+let waSock = null;
 const conversationHistory = {}; // Memoria de chat por usuario
 
 app.get('/', (req, res) => res.send('🤖 Surva Social Omnicanal AI Bot (WhatsApp, Instagram, Facebook) Activo 24/7'));
 
-// Endpoint para mostrar el Código QR de WhatsApp
+// Endpoint para verificar estado y QR de WhatsApp
 app.get('/qr', async (req, res) => {
   if (isConnected) {
     return res.send(`
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Omnicanal IA Conectado</title>
+        <title>WhatsApp IA Conectado</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
           body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
@@ -37,9 +38,10 @@ app.get('/qr', async (req, res) => {
       </head>
       <body>
         <div class="card">
-          <div class="badge">● SISTEMA OMNICANAL EN VIVO</div>
-          <h1>✅ WhatsApp, Instagram y Facebook Conectados</h1>
-          <p>Tu bot de Inteligencia Artificial está respondiendo mensajes automáticos las 24 horas del día en WhatsApp, Instagram DMs y Messenger.</p>
+          <div class="badge">● SISTEMA WHATSAPP EN VIVO</div>
+          <h1>✅ WhatsApp IA Conectado con Éxito</h1>
+          <p>Tu robot de Inteligencia Artificial está respondiendo mensajes automáticos las 24 horas del día.</p>
+          <p style="color: #e2e8f0; font-weight: 500; margin-top: 20px;">📲 Tu aplicación de WhatsApp Business en tu celular sigue funcionando 100% normal.</p>
         </div>
       </body>
       </html>
@@ -90,7 +92,7 @@ app.get('/qr', async (req, res) => {
           <img src="${qrDataUrl}" width="260" height="260" alt="WhatsApp QR Code"/>
           <ol>
             <li>Abre <b>WhatsApp Business</b> en tu celular.</li>
-            <li>Ve a <b>Ajustes</b> -> <b>Dispositivos vinculados</b>.</li>
+            <li>Ve a <b>Ajustes / Configuración</b> -> <b>Dispositivos vinculados</b>.</li>
             <li>Toca <b>Vincular un dispositivo</b> y apunta la cámara a este QR.</li>
           </ol>
         </div>
@@ -121,18 +123,14 @@ app.post('/webhook', async (req, res) => {
 
   try {
     const body = req.body;
-    console.log('📥 Evento de Instagram / Facebook:', JSON.stringify(body));
-
     if (body.object === 'instagram' || body.object === 'page') {
       for (const entry of body.entry || []) {
-        // DMs y Comentarios
         if (entry.messaging) {
           for (const msgEvent of entry.messaging) {
             const senderId = msgEvent.sender?.id;
             const text = msgEvent.message?.text;
             if (senderId && text && !msgEvent.message?.is_echo) {
-              console.log(`💬 DM de Instagram/Facebook (${senderId}): ${text}`);
-
+              console.log(`💬 DM Meta (${senderId}): ${text}`);
               if (!conversationHistory[senderId]) conversationHistory[senderId] = [];
               conversationHistory[senderId].push(`Cliente: ${text}`);
 
@@ -150,7 +148,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Enviar DM Meta (Instagram / Messenger)
 async function sendMetaDM(recipientId, message) {
   if (!META_PAGE_ACCESS_TOKEN) return;
   try {
@@ -159,7 +156,7 @@ async function sendMetaDM(recipientId, message) {
       recipient: { id: recipientId },
       message: { text: message }
     });
-    console.log(`✅ DM enviado con éxito a Instagram/Facebook (${recipientId})`);
+    console.log(`✅ DM enviado con éxito a (${recipientId})`);
   } catch (e) {
     console.error("Error enviando Meta DM:", e.response?.data || e.message);
   }
@@ -168,10 +165,12 @@ async function sendMetaDM(recipientId, message) {
 async function startWhatsAppBot() {
   const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
   
-  const waSock = makeWASocket({
+  waSock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: false
+    printQRInTerminal: false,
+    keepAliveIntervalMs: 15000,
+    connectTimeoutMs: 30000
   });
 
   waSock.ev.on('creds.update', saveCreds);
@@ -186,12 +185,16 @@ async function startWhatsAppBot() {
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      console.log('✅ WhatsApp IA Conectado!');
+      console.log('✅ WhatsApp IA Conectado y listo!');
     }
     if (connection === 'close') {
       isConnected = false;
-      const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
-      if (shouldReconnect) startWhatsAppBot();
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log(`Conexión cerrada (status ${statusCode}), reconectando...`, shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(startWhatsAppBot, 3000); // Reconexión automática con retraso de 3s
+      }
     }
   });
 
@@ -199,25 +202,34 @@ async function startWhatsAppBot() {
     try {
       const messagesList = m.messages || [];
       for (const msg of messagesList) {
-        if (!msg || msg.key.fromMe || !msg.message) continue;
+        if (!msg || !msg.message) continue;
 
         const from = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
+        if (!from || from.endsWith('@g.us')) continue; // Ignorar grupos
 
-        if (!text || from.endsWith('@g.us')) continue;
+        // Extraer texto
+        const text = msg.message.conversation ||
+                     msg.message.extendedTextMessage?.text ||
+                     msg.message.imageMessage?.caption ||
+                     msg.message.videoMessage?.caption || '';
 
-        console.log(`💬 WhatsApp de ${from}: ${text}`);
+        if (!text) continue;
 
-        if (!conversationHistory[from]) conversationHistory[from] = [];
-        conversationHistory[from].push(`Cliente: ${text}`);
-        if (conversationHistory[from].length > 10) conversationHistory[from].shift();
+        console.log(`💬 WhatsApp [${msg.key.fromMe ? 'fromMe' : 'Cliente'}] de ${from}: ${text}`);
 
-        const aiReply = await getGeminiReply(conversationHistory[from].join('\n'), text);
-        conversationHistory[from].push(`Mila AI: ${aiReply}`);
+        // Responder si NO es un mensaje propio saliente
+        if (!msg.key.fromMe) {
+          if (!conversationHistory[from]) conversationHistory[from] = [];
+          conversationHistory[from].push(`Cliente: ${text}`);
+          if (conversationHistory[from].length > 10) conversationHistory[from].shift();
 
-        await new Promise(r => setTimeout(r, 1000));
-        await waSock.sendMessage(from, { text: aiReply });
-        console.log(`✅ IA respondió WhatsApp a ${from}`);
+          const aiReply = await getGeminiReply(conversationHistory[from].join('\n'), text);
+          conversationHistory[from].push(`Mila AI: ${aiReply}`);
+
+          await new Promise(r => setTimeout(r, 1000));
+          await waSock.sendMessage(from, { text: aiReply });
+          console.log(`✅ IA respondió WhatsApp a ${from}`);
+        }
       }
     } catch (err) {
       console.error('Error en respuesta WhatsApp:', err.message);
@@ -251,6 +263,6 @@ Mensaje más reciente del cliente: "${userText}"`
 }
 
 app.listen(PORT, () => {
-  console.log('Servidor Omnicanal activo en puerto ' + PORT);
+  console.log('Servidor activo en puerto ' + PORT);
   startWhatsAppBot().catch(err => console.error('Error iniciando Bot WhatsApp:', err));
 });
