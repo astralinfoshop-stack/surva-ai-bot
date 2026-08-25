@@ -13,19 +13,18 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 let currentQR = '';
 let isConnected = false;
 let waSock = null;
-const recentLogs = [];
 
-function addLog(msg) {
-  const time = new Date().toLocaleTimeString('es-US', { timeZone: 'America/New_York' });
-  recentLogs.unshift(`[${time}] ${msg}`);
-  if (recentLogs.length > 50) recentLogs.pop();
-}
+// Keep-Alive para evitar que Render ponga a dormir el servidor (cada 4 minutos)
+setInterval(async () => {
+  try {
+    await axios.get('https://surva-ai-bot-live.onrender.com/');
+    console.log('⏰ Keep-Alive Ping ejecutado con éxito');
+  } catch (e) {
+    // ignorar error de ping
+  }
+}, 4 * 60 * 1000);
 
 app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
-
-app.get('/logs', (req, res) => {
-  res.json({ logs: recentLogs });
-});
 
 app.get('/qr', async (req, res) => {
   if (isConnected) {
@@ -109,18 +108,18 @@ async function startBot() {
     if (qr) {
       currentQR = qr;
       isConnected = false;
-      addLog('📲 Nuevo QR listo para escanear');
+      console.log('📲 QR listo para escanear en /qr');
     }
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      addLog('✅ WhatsApp Conectado y Listo!');
+      console.log('✅ WhatsApp Conectado con Éxito!');
     }
     if (connection === 'close') {
       isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      addLog(`Conexión cerrada status: ${statusCode}`);
+      console.log(`Conexión cerrada status: ${statusCode}, reconectando...`);
       if (shouldReconnect) {
         setTimeout(startBot, 2000);
       }
@@ -138,21 +137,18 @@ async function startBot() {
 
         const userText = getMessageText(msg);
 
-        addLog(`💬 Entrante de ${from} [fromMe=${msg.key.fromMe}]: "${userText}"`);
-
         if (!userText) continue;
 
-        // Responder si no empieza con la firma del bot
+        // Responder si no empieza con la firma del bot "🤖"
         if (!userText.trim().startsWith('🤖')) {
+          console.log(`💬 Procesando mensaje de ${from}: "${userText}"`);
           const replyText = await generateAIReply(userText);
-          
-          // Enviar respuesta al chat principal
           await waSock.sendMessage(from, { text: replyText });
-          addLog(`✅ IA respondió con éxito a ${from}`);
+          console.log(`✅ IA respondió con éxito a ${from}`);
         }
       }
     } catch (err) {
-      addLog(`Error en mensaje: ${err.message}`);
+      console.error(`Error en mensaje: ${err.message}`);
     }
   });
 }
