@@ -193,7 +193,7 @@ async function startWhatsAppBot() {
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(`Conexión cerrada (status ${statusCode}), reconectando...`, shouldReconnect);
       if (shouldReconnect) {
-        setTimeout(startWhatsAppBot, 3000); // Reconexión automática con retraso de 3s
+        setTimeout(startWhatsAppBot, 3000);
       }
     }
   });
@@ -217,7 +217,7 @@ async function startWhatsAppBot() {
 
         console.log(`💬 WhatsApp [${msg.key.fromMe ? 'fromMe' : 'Cliente'}] de ${from}: ${text}`);
 
-        // Responder si NO es un mensaje propio saliente
+        // Responder a cualquier mensaje entrante que no hayamos enviado nosotros
         if (!msg.key.fromMe) {
           if (!conversationHistory[from]) conversationHistory[from] = [];
           conversationHistory[from].push(`Cliente: ${text}`);
@@ -226,20 +226,22 @@ async function startWhatsAppBot() {
           const aiReply = await getGeminiReply(conversationHistory[from].join('\n'), text);
           conversationHistory[from].push(`Mila AI: ${aiReply}`);
 
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 800));
+
+          // Enviar respuesta garantizada
           await waSock.sendMessage(from, { text: aiReply });
           console.log(`✅ IA respondió WhatsApp a ${from}`);
         }
       }
     } catch (err) {
-      console.error('Error en respuesta WhatsApp:', err.message);
+      console.error('Error procesando mensaje WhatsApp:', err.message);
     }
   });
 }
 
 async function getGeminiReply(chatHistory, userText) {
   if (!GEMINI_API_KEY) {
-    return `¡Hola! 😊 Gracias por escribir a Surva Social. Ofrecemos Branding, Marketing Digital y Pautas Publicitarias. ¿Te gustaría agendar una llamada de consulta estratégica?📲`;
+    return `¡Hola! 😊 Gracias por escribir a Surva Social. Te ayudamos a escalar las ventas de tu negocio con Branding, Marketing Digital y Desarrollo Web de alto impacto. ¿En qué podemos ayudarte hoy?📲`;
   }
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
