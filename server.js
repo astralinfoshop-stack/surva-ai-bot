@@ -16,6 +16,23 @@ let waSock = null;
 
 app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
 
+// Endpoint de prueba directa
+app.get('/send-test', async (req, res) => {
+  const target = req.query.to || "18132397509";
+  const jid = target.includes('@') ? target : `${target.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+  
+  if (!waSock || !isConnected) {
+    return res.json({ status: "error", message: "WhatsApp no esta conectado aun" });
+  }
+
+  try {
+    const result = await waSock.sendMessage(jid, { text: "🤖 ¡Hola! Este es un mensaje de prueba directo enviándose desde tu bot de IA de Surva Social." });
+    return res.json({ status: "success", jid: jid, result: result });
+  } catch (err) {
+    return res.json({ status: "error", error: err.message });
+  }
+});
+
 app.get('/qr', async (req, res) => {
   if (isConnected) {
     return res.send(`
@@ -119,13 +136,13 @@ async function startBot() {
 
         if (!userText) continue;
 
-        console.log(`💬 Mensaje [${msg.key.fromMe ? 'Saliente' : 'Entrante'}] de ${from}: ${userText}`);
+        console.log(`💬 Mensaje entrante [fromMe=${msg.key.fromMe}] de ${from}: ${userText}`);
 
-        // Responder si el mensaje viene del cliente (NO saliente propio)
+        // Responder si no es un mensaje enviado por el propio bot
         if (!msg.key.fromMe) {
           const replyText = await generateAIReply(userText);
           await waSock.sendMessage(from, { text: replyText });
-          console.log(`✅ IA respondió con éxito a ${from}`);
+          console.log(`✅ IA respondió a ${from}`);
         }
       }
     } catch (err) {
