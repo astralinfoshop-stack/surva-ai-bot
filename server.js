@@ -13,8 +13,19 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 let currentQR = '';
 let isConnected = false;
 let waSock = null;
+const recentLogs = [];
+
+function addLog(msg) {
+  const time = new Date().toLocaleTimeString();
+  recentLogs.unshift(`[${time}] ${msg}`);
+  if (recentLogs.length > 30) recentLogs.pop();
+}
 
 app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
+
+app.get('/logs', (req, res) => {
+  res.json({ logs: recentLogs });
+});
 
 // Endpoint de prueba directa
 app.get('/send-test', async (req, res) => {
@@ -22,13 +33,15 @@ app.get('/send-test', async (req, res) => {
   const jid = target.includes('@') ? target : `${target.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
   
   if (!waSock || !isConnected) {
-    return res.json({ status: "error", message: "WhatsApp no esta conectado aun" });
+    return res.json({ status: "error", message: "WhatsApp no esta conectado aun en /qr" });
   }
 
   try {
-    const result = await waSock.sendMessage(jid, { text: "🤖 ¡Hola! Este es un mensaje de prueba directo enviándose desde tu bot de IA de Surva Social." });
+    const result = await waSock.sendMessage(jid, { text: "🤖 ¡Hola Mateo! Este es un mensaje de prueba directo enviado desde la IA de Surva Social a tu celular personal." });
+    addLog(`Mensaje directo enviado a ${jid}`);
     return res.json({ status: "success", jid: jid, result: result });
   } catch (err) {
+    addLog(`Error en send-test: ${err.message}`);
     return res.json({ status: "error", error: err.message });
   }
 });
@@ -103,18 +116,18 @@ async function startBot() {
     if (qr) {
       currentQR = qr;
       isConnected = false;
-      console.log('📲 QR listo para escanear en /qr');
+      addLog('Nuevo QR generado para /qr');
     }
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      console.log('✅ WhatsApp Conectado con Éxito!');
+      addLog('✅ WhatsApp Conectado con Éxito!');
     }
     if (connection === 'close') {
       isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Conexión cerrada (${statusCode}), reconectando...`, shouldReconnect);
+      addLog(`Conexión cerrada status: ${statusCode}, shouldReconnect: ${shouldReconnect}`);
       if (shouldReconnect) {
         setTimeout(startBot, 2000);
       }
@@ -128,7 +141,7 @@ async function startBot() {
         if (!msg || !msg.message) continue;
 
         const from = msg.key.remoteJid;
-        if (!from || from.endsWith('@g.us')) continue; // Ignorar grupos
+        if (!from || from.endsWith('@g.us')) continue;
 
         const userText = msg.message.conversation ||
                          msg.message.extendedTextMessage?.text ||
@@ -136,17 +149,16 @@ async function startBot() {
 
         if (!userText) continue;
 
-        console.log(`💬 Mensaje entrante [fromMe=${msg.key.fromMe}] de ${from}: ${userText}`);
+        addLog(`💬 Recibido de ${from} [fromMe=${msg.key.fromMe}]: ${userText}`);
 
-        // Responder si no es un mensaje enviado por el propio bot
         if (!msg.key.fromMe) {
           const replyText = await generateAIReply(userText);
           await waSock.sendMessage(from, { text: replyText });
-          console.log(`✅ IA respondió a ${from}`);
+          addLog(`✅ IA respondió a ${from}: ${replyText.substring(0, 30)}...`);
         }
       }
     } catch (err) {
-      console.error('Error respondiendo mensaje:', err.message);
+      addLog(`Error en mensaje: ${err.message}`);
     }
   });
 }
