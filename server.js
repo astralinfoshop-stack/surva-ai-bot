@@ -149,12 +149,22 @@ async function startBot() {
 
         if (!userText) continue;
 
-        addLog(`💬 Recibido de ${from} [fromMe=${msg.key.fromMe}]: ${userText}`);
+        addLog(`💬 Entrante de ${from} [fromMe=${msg.key.fromMe}]: ${userText}`);
 
+        // Responder únicamente a mensajes que NO hayan sido enviados por el propio bot
         if (!msg.key.fromMe) {
           const replyText = await generateAIReply(userText);
+          
+          // Responder al JID remoto
           await waSock.sendMessage(from, { text: replyText });
-          addLog(`✅ IA respondió a ${from}: ${replyText.substring(0, 30)}...`);
+          addLog(`✅ IA respondió a ${from}`);
+
+          // Si es un identificador LID de WhatsApp, enviar copia al número de teléfono tradicional para asegurar la notificación
+          if (from.endsWith('@lid')) {
+            const phoneJid = "18132397509@s.whatsapp.net";
+            await waSock.sendMessage(phoneJid, { text: replyText });
+            addLog(`✅ Copia enviada al teléfono ${phoneJid}`);
+          }
         }
       }
     } catch (err) {
