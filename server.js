@@ -12,8 +12,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let currentQR = '';
 let isConnected = false;
+const conversationHistory = {}; // Memoria de chat por usuario
 
-app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot (QR Engine) Activo 24/7. Entra a /qr para conectar tu WhatsApp.'));
+app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot (QR Engine) Activo 24/7'));
 
 // Endpoint para mostrar el Código QR en vivo
 app.get('/qr', async (req, res) => {
@@ -144,46 +145,62 @@ async function startWhatsAppBot() {
 
   waSock.ev.on('messages.upsert', async (m) => {
     try {
-      const msg = m.messages[0];
-      if (!msg || msg.key.fromMe || !msg.message) return;
+      const messagesList = m.messages || [];
+      for (const msg of messagesList) {
+        if (!msg || msg.key.fromMe || !msg.message) continue;
 
-      const from = msg.key.remoteJid;
-      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const from = msg.key.remoteJid;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
 
-      if (!text || from.endsWith('@g.us')) return; // Ignorar grupos
+        if (!text || from.endsWith('@g.us')) continue; // Ignorar grupos
 
-      console.log(`💬 Mensaje recibido de ${from}: ${text}`);
+        console.log(`💬 Mensaje recibido de ${from}: ${text}`);
 
-      // Respuesta inteligente con Gemini AI
-      const aiReply = await getGeminiReply(text);
+        // Guardar historial de conversación
+        if (!conversationHistory[from]) conversationHistory[from] = [];
+        conversationHistory[from].push(`Cliente: ${text}`);
+        if (conversationHistory[from].length > 10) conversationHistory[from].shift(); // Mantener ultimos 10 mensajes
 
-      // Responder directamente al usuario por WhatsApp
-      await waSock.sendMessage(from, { text: aiReply });
-      console.log(`✅ IA respondió con éxito a ${from}`);
+        // Respuesta inteligente con Gemini AI
+        const aiReply = await getGeminiReply(conversationHistory[from].join('\n'), text);
+
+        conversationHistory[from].push(`Mila AI: ${aiReply}`);
+
+        // Pausa natural de 1 segundo para simular tipeo humano
+        await new Promise(r => setTimeout(r, 1000));
+
+        // Responder directamente al usuario por WhatsApp
+        await waSock.sendMessage(from, { text: aiReply });
+        console.log(`✅ IA respondió con éxito a ${from}`);
+      }
     } catch (err) {
       console.error('Error en respuesta automática:', err.message);
     }
   });
 }
 
-async function getGeminiReply(userText) {
+async function getGeminiReply(chatHistory, userText) {
   if (!GEMINI_API_KEY) {
-    return `¡Hola! 😊 Gracias por comunicarte con Surva Social. Ofrecemos servicios de Branding, Marketing Digital, Diseño y Pautas Publicitarias para escalar tu negocio. ¿En qué podemos ayudarte hoy?📲`;
+    return `¡Hola! 😊 Gracias por escribir a Surva Social. Ofrecemos Branding, Marketing Digital y Pautas Publicitarias. ¿Te gustaría agendar una llamada de consulta estratégica?📲`;
   }
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const payload = {
       contents: [{
         parts: [{
-          text: `Eres Mila AI, la asesora experta de la agencia Surva Social. Responde amablemente en español, máximo 2 párrafos cortos con emojis. Promociona los servicios de Branding, Ads y Desarrollo Web de Surva Social. El usuario pregunta: "${userText}"`
+          text: `Eres Mila AI, la asesora virtual experta de la agencia Surva Social. Responde amablemente en español, de forma fluida y conversacional en máximo 2 párrafos cortos con emojis. Promociona los servicios de Branding, Marketing y Diseño Web de Surva Social.
+Historial del chat:
+${chatHistory}
+
+Mensaje más reciente del cliente: "${userText}"`
         }]
       }]
     };
     const response = await axios.post(url, payload);
-    return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Hola! 😊 En Surva Social te ayudamos a escalar tus ventas con branding y marketing de alto impacto. ¿En qué podemos ayudarte hoy?";
+    return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Excelente! 😊 En Surva Social diseñamos estrategias de marca que venden. ¿Te gustaría que te enviemos una propuesta personalizada?";
   } catch (e) {
     console.error("Gemini Error:", e.message);
-    return "¡Hola! 😊 Bienvenido a Surva Social. ¿Cómo podemos ayudarte con la estrategia de tu marca hoy?";
+    return "¡Perfecto! 😊 Si deseas podemos coordinar una breve llamada para analizar tu proyecto. ¿Te parece bien?";
   }
 }
 
