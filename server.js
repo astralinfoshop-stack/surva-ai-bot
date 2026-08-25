@@ -8,6 +8,9 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "mi_token_secreto_surva_social_2026";
+const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "1328789613640536";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 let currentQR = '';
@@ -18,27 +21,27 @@ let waSock = null;
 setInterval(async () => {
   try {
     await axios.get('https://surva-ai-bot-live.onrender.com/');
-    console.log('⏰ Keep-Alive Ping ejecutado con éxito');
-  } catch (e) {
-    // ignorar error de ping
-  }
+  } catch (e) {}
 }, 4 * 60 * 1000);
 
-app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
+app.get('/', (req, res) => res.send('🤖 Surva Social Multi-Channel AI Bot (WhatsApp Business + Meta API) Activo 24/7'));
 
+// ==========================================
+// 1. ENDPOINT PARA CÓDIGO QR (WHATSAPP BUSINESS)
+// ==========================================
 app.get('/qr', async (req, res) => {
   if (isConnected) {
     return res.send(`
       <!DOCTYPE html>
       <html>
       <head>
-        <title>WhatsApp Conectado</title>
+        <title>WhatsApp Business Conectado</title>
         <style>body{font-family:sans-serif;background:#0f172a;color:#4ade80;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;} .card{background:#1e293b;padding:40px;border-radius:20px;text-align:center;box-shadow:0 10px 25px rgba(0,0,0,0.5);}</style>
       </head>
       <body>
         <div class="card">
-          <h1>✅ WhatsApp IA Conectado y Respondiendo 24/7</h1>
-          <p style="color:#94a3b8;">Tu bot está listo y atendiendo mensajes automáticos en vivo.</p>
+          <h1>✅ WhatsApp Business IA Conectado y Respondiendo 24/7</h1>
+          <p style="color:#94a3b8;">Tu bot está listo y atendiendo mensajes en tu celular +1 (813) 326-4182.</p>
         </div>
       </body>
       </html>
@@ -67,8 +70,8 @@ app.get('/qr', async (req, res) => {
       </head>
       <body>
         <div class="card">
-          <h2>📲 Vincula tu WhatsApp Business</h2>
-          <p>Escanea este código QR desde tu celular:</p>
+          <h2>📲 Vincula tu WhatsApp Business (+1 813-326-4182)</h2>
+          <p>Escanea este código QR desde el celular de tu negocio:</p>
           <img src="${qrDataUrl}" width="250" height="250"/>
           <p style="color:#94a3b8;font-size:14px;">WhatsApp -> Ajustes -> Dispositivos vinculados -> Vincular dispositivo</p>
         </div>
@@ -80,6 +83,68 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+// ==========================================
+// 2. ENDPOINTS PARA META CLOUD API (WEBHOOKS)
+// ==========================================
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ Webhook verificado por Meta');
+    return res.status(200).send(challenge);
+  }
+  return res.sendStatus(403);
+});
+
+app.post('/webhook', async (req, res) => {
+  res.status(200).send('EVENT_RECEIVED');
+  try {
+    const body = req.body;
+    if (body.object === 'whatsapp_business_account') {
+      for (const entry of body.entry || []) {
+        for (const change of entry.changes || []) {
+          const value = change.value;
+          if (value && value.messages && value.messages.length > 0) {
+            const msg = value.messages[0];
+            const fromNumber = msg.from;
+            const text = msg.text?.body || msg.caption || '';
+            if (fromNumber && text) {
+              const aiReply = await generateAIReply(text);
+              await sendMetaWhatsAppMessage(fromNumber, aiReply);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error procesando webhook de Meta:', err.message);
+  }
+});
+
+async function sendMetaWhatsAppMessage(to, message) {
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.META_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
+  if (!token || !phoneId) return;
+  try {
+    await axios.post(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to,
+      type: "text",
+      text: { body: message }
+    }, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+  } catch (e) {
+    console.error("Error enviando Meta WhatsApp:", e.message);
+  }
+}
+
+// ==========================================
+// 3. MOTOR DE WHATSAPP BUSINESS DIRECTO (BAILEYS)
+// ==========================================
 function getMessageText(msg) {
   if (!msg || !msg.message) return '';
   const m = msg.message;
@@ -99,11 +164,9 @@ async function startBot() {
     auth: state,
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
-    syncFullHistory: false, // ¡No descargar historial viejo para atender inmediatamente mensajes nuevos!
+    syncFullHistory: false,
     markOnlineOnConnect: true,
-    getMessage: async (key) => {
-      return { conversation: 'Surva Social AI' };
-    }
+    getMessage: async (key) => { return { conversation: 'Surva Social AI' }; }
   });
 
   waSock.ev.on('creds.update', saveCreds);
@@ -113,18 +176,16 @@ async function startBot() {
     if (qr) {
       currentQR = qr;
       isConnected = false;
-      console.log('📲 QR listo para escanear en /qr');
     }
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      console.log('✅ WhatsApp Conectado con Éxito!');
+      console.log('✅ WhatsApp Business Conectado con Éxito!');
     }
     if (connection === 'close') {
       isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Conexión cerrada status: ${statusCode}, reconectando...`);
       if (shouldReconnect) {
         setTimeout(startBot, 2000);
       }
@@ -141,15 +202,11 @@ async function startBot() {
         if (!from || from.endsWith('@g.us')) continue;
 
         const userText = getMessageText(msg);
-
         if (!userText) continue;
 
-        // Responder si no empieza con la firma del bot "🤖"
         if (!userText.trim().startsWith('🤖')) {
-          console.log(`💬 Procesando mensaje de ${from}: "${userText}"`);
           const replyText = await generateAIReply(userText);
           await waSock.sendMessage(from, { text: replyText });
-          console.log(`✅ IA respondió con éxito a ${from}`);
         }
       }
     } catch (err) {
@@ -158,19 +215,23 @@ async function startBot() {
   });
 }
 
+// ==========================================
+// 4. GENERADOR DE INTELIGENCIA ARTIFICIAL (GEMINI)
+// ==========================================
 async function generateAIReply(text) {
   if (!GEMINI_API_KEY) {
     return "🤖 ¡Hola! 😊 Gracias por escribir a Surva Social. Te ayudamos a escalar las ventas de tu negocio con Branding, Marketing Digital y Desarrollo Web de alto impacto. ¿En qué podemos ayudarte hoy?📲";
   }
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const response = await axios.post(url, {
+    const payload = {
       contents: [{
         parts: [{
           text: `Eres Mila AI, la asesora virtual de la agencia Surva Social. Responde amablemente en español, en 2 párrafos cortos con emojis, promocionando los servicios de Branding, Marketing y Web. Tu respuesta SIEMPRE debe comenzar con el emoji "🤖". El usuario dice: "${text}"`
         }]
       }]
-    });
+    };
+    const response = await axios.post(url, payload);
     const reply = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Hola! 😊 En Surva Social te ayudamos a escalar tus ventas con branding y marketing de alto impacto. ¿En qué podemos ayudarte hoy?";
     return reply.startsWith('🤖') ? reply : `🤖 ${reply}`;
   } catch (e) {
@@ -179,6 +240,6 @@ async function generateAIReply(text) {
 }
 
 app.listen(PORT, () => {
-  console.log('Servidor en puerto ' + PORT);
+  console.log('Servidor Multi-Canal en puerto ' + PORT);
   startBot().catch(err => console.error('Error al iniciar bot:', err));
 });
