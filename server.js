@@ -28,7 +28,7 @@ app.get('/qr', async (req, res) => {
       <body>
         <div class="card">
           <h1>✅ WhatsApp IA Conectado y Respondiendo 24/7</h1>
-          <p style="color:#94a3b8;">Tu bot está listo y respondiendo mensajes en vivo.</p>
+          <p style="color:#94a3b8;">Tu bot está listo y atendiendo mensajes automáticos en vivo.</p>
         </div>
       </body>
       </html>
@@ -119,8 +119,9 @@ async function startBot() {
 
         if (!userText) continue;
 
-        if (!msg.key.fromMe) {
-          console.log(`💬 Cliente (${from}): ${userText}`);
+        // Responder a cualquier mensaje que NO empiece con la firma del bot "🤖"
+        if (!userText.trim().startsWith('🤖')) {
+          console.log(`💬 Procesando texto (${from}): ${userText}`);
           const replyText = await generateAIReply(userText);
           await waSock.sendMessage(from, { text: replyText });
           console.log(`✅ IA respondió con éxito a ${from}`);
@@ -134,20 +135,21 @@ async function startBot() {
 
 async function generateAIReply(text) {
   if (!GEMINI_API_KEY) {
-    return "¡Hola! 😊 Gracias por escribir a Surva Social. Te ayudamos a escalar las ventas de tu negocio con Branding, Marketing Digital y Desarrollo Web de alto impacto. ¿En qué podemos ayudarte hoy?📲";
+    return "🤖 ¡Hola! 😊 Gracias por escribir a Surva Social. Te ayudamos a escalar las ventas de tu negocio con Branding, Marketing Digital y Desarrollo Web de alto impacto. ¿En qué podemos ayudarte hoy?📲";
   }
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const response = await axios.post(url, {
       contents: [{
         parts: [{
-          text: `Eres Mila AI, la asesora virtual de la agencia Surva Social. Responde amablemente en español, en 2 párrafos cortos con emojis, promocionando los servicios de Branding, Marketing y Web. El usuario dice: "${text}"`
+          text: `Eres Mila AI, la asesora virtual de la agencia Surva Social. Responde amablemente en español, en 2 párrafos cortos con emojis, promocionando los servicios de Branding, Marketing y Web. Tu respuesta SIEMPRE debe comenzar con el emoji "🤖". El usuario dice: "${text}"`
         }]
       }]
     });
-    return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Hola! 😊 En Surva Social te ayudamos a escalar tus ventas con branding y marketing de alto impacto. ¿En qué podemos ayudarte hoy?";
+    const reply = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Hola! 😊 En Surva Social te ayudamos a escalar tus ventas con branding y marketing de alto impacto. ¿En qué podemos ayudarte hoy?";
+    return reply.startsWith('🤖') ? reply : `🤖 ${reply}`;
   } catch (e) {
-    return "¡Hola! 😊 Bienvenido a Surva Social. ¿Cómo podemos ayudarte con la estrategia de tu marca hoy?";
+    return "🤖 ¡Hola! 😊 Bienvenido a Surva Social. ¿Cómo podemos ayudarte con la estrategia de tu marca hoy?";
   }
 }
 
