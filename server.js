@@ -3,6 +3,7 @@ import axios from 'axios';
 import QRCode from 'qrcode';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import pino from 'pino';
+import fs from 'fs';
 
 const app = express();
 app.use(express.json());
@@ -16,7 +17,7 @@ let waSock = null;
 const recentLogs = [];
 
 function addLog(msg) {
-  const time = new Date().toLocaleTimeString();
+  const time = new Date().toLocaleTimeString('es-US', { timeZone: 'America/New_York' });
   recentLogs.unshift(`[${time}] ${msg}`);
   if (recentLogs.length > 30) recentLogs.pop();
 }
@@ -25,25 +26,6 @@ app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24
 
 app.get('/logs', (req, res) => {
   res.json({ logs: recentLogs });
-});
-
-// Endpoint de prueba directa
-app.get('/send-test', async (req, res) => {
-  const target = req.query.to || "18132397509";
-  const jid = target.includes('@') ? target : `${target.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-  
-  if (!waSock || !isConnected) {
-    return res.json({ status: "error", message: "WhatsApp no esta conectado aun en /qr" });
-  }
-
-  try {
-    const result = await waSock.sendMessage(jid, { text: "🤖 ¡Hola Mateo! Este es un mensaje de prueba directo enviado desde la IA de Surva Social a tu celular personal." });
-    addLog(`Mensaje directo enviado a ${jid}`);
-    return res.json({ status: "success", jid: jid, result: result });
-  } catch (err) {
-    addLog(`Error en send-test: ${err.message}`);
-    return res.json({ status: "error", error: err.message });
-  }
 });
 
 app.get('/qr', async (req, res) => {
@@ -101,7 +83,8 @@ app.get('/qr', async (req, res) => {
 });
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+  const authDir = 'baileys_auth_info';
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
   waSock = makeWASocket({
     auth: state,
@@ -116,19 +99,23 @@ async function startBot() {
     if (qr) {
       currentQR = qr;
       isConnected = false;
-      addLog('Nuevo QR generado para /qr');
+      addLog('📲 Nuevo QR limpio listo para escanear');
     }
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      addLog('✅ WhatsApp Conectado con Éxito!');
+      addLog('✅ WhatsApp Conectado y Listo!');
     }
     if (connection === 'close') {
       isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      addLog(`Conexión cerrada status: ${statusCode}, shouldReconnect: ${shouldReconnect}`);
+      addLog(`Conexión cerrada: ${statusCode}, reconectando...`);
       if (shouldReconnect) {
+        setTimeout(startBot, 2000);
+      } else {
+        // Limpiar sesión si se cerró sesión
+        try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) {}
         setTimeout(startBot, 2000);
       }
     }
@@ -149,26 +136,15 @@ async function startBot() {
 
         if (!userText) continue;
 
-        addLog(`💬 Entrante de ${from} [fromMe=${msg.key.fromMe}]: ${userText}`);
-
-        // Responder únicamente a mensajes que NO hayan sido enviados por el propio bot
         if (!msg.key.fromMe) {
+          addLog(`💬 Cliente (${from}): ${userText}`);
           const replyText = await generateAIReply(userText);
-          
-          // Responder al JID remoto
           await waSock.sendMessage(from, { text: replyText });
           addLog(`✅ IA respondió a ${from}`);
-
-          // Si es un identificador LID de WhatsApp, enviar copia al número de teléfono tradicional para asegurar la notificación
-          if (from.endsWith('@lid')) {
-            const phoneJid = "18132397509@s.whatsapp.net";
-            await waSock.sendMessage(phoneJid, { text: replyText });
-            addLog(`✅ Copia enviada al teléfono ${phoneJid}`);
-          }
         }
       }
     } catch (err) {
-      addLog(`Error en mensaje: ${err.message}`);
+      addLog(`Error respondiendo: ${err.message}`);
     }
   });
 }
