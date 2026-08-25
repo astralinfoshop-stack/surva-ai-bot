@@ -1,174 +1,136 @@
 import express from 'express';
 import axios from 'axios';
-import QRCode from 'qrcode';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
-import pino from 'pino';
-import fs from 'fs';
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "mi_token_secreto_surva_social_2026";
+const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "1122495394284383";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-let currentQR = '';
-let isConnected = false;
-let waSock = null;
-const recentLogs = [];
+app.get('/', (req, res) => res.send('🤖 Surva Social Meta Cloud AI Bot Activo 24/7'));
 
-function addLog(msg) {
-  const time = new Date().toLocaleTimeString('es-US', { timeZone: 'America/New_York' });
-  recentLogs.unshift(`[${time}] ${msg}`);
-  if (recentLogs.length > 30) recentLogs.pop();
-}
+// Meta Webhook Verification (GET)
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
 
-app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
-
-app.get('/logs', (req, res) => {
-  res.json({ logs: recentLogs });
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ Webhook verificado con éxito por Meta');
+    return res.status(200).send(challenge);
+  }
+  return res.sendStatus(403);
 });
 
-app.get('/qr', async (req, res) => {
-  if (isConnected) {
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>WhatsApp Conectado</title>
-        <style>body{font-family:sans-serif;background:#0f172a;color:#4ade80;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;} .card{background:#1e293b;padding:40px;border-radius:20px;text-align:center;box-shadow:0 10px 25px rgba(0,0,0,0.5);}</style>
-      </head>
-      <body>
-        <div class="card">
-          <h1>✅ WhatsApp IA Conectado y Respondiendo</h1>
-          <p style="color:#94a3b8;">Tu bot está listo y atendiendo mensajes automáticos 24/7.</p>
-        </div>
-      </body>
-      </html>
-    `);
-  }
-
-  if (!currentQR) {
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Generando QR...</title><meta http-equiv="refresh" content="2"><style>body{font-family:sans-serif;background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}</style></head>
-      <body><h2>⏳ Generando Código QR de WhatsApp...</h2></body>
-      </html>
-    `);
-  }
+// Meta Incoming Notifications (POST)
+app.post('/webhook', async (req, res) => {
+  res.status(200).send('EVENT_RECEIVED');
 
   try {
-    const qrDataUrl = await QRCode.toDataURL(currentQR);
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Escanear QR WhatsApp</title>
-        <meta http-equiv="refresh" content="10">
-        <style>body{font-family:sans-serif;background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;} .card{background:#1e293b;padding:30px;border-radius:20px;text-align:center;} img{border-radius:12px;background:#fff;padding:10px;margin:15px 0;}</style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>📲 Vincula tu WhatsApp Business</h2>
-          <p>Escanea este código QR desde tu celular:</p>
-          <img src="${qrDataUrl}" width="250" height="250"/>
-          <p style="color:#94a3b8;font-size:14px;">WhatsApp -> Ajustes -> Dispositivos vinculados -> Vincular dispositivo</p>
-        </div>
-      </body>
-      </html>
-    `);
-  } catch (e) {
-    return res.send("Error generando QR");
+    const body = req.body;
+    console.log('📥 Notificación entrante de Meta:', JSON.stringify(body));
+
+    // 1. Mensajes de WhatsApp Cloud API
+    if (body.object === 'whatsapp_business_account') {
+      for (const entry of body.entry || []) {
+        for (const change of entry.changes || []) {
+          const value = change.value;
+          if (value && value.messages && value.messages.length > 0) {
+            const msg = value.messages[0];
+            const fromNumber = msg.from; // Número de WhatsApp del cliente
+            const text = msg.text?.body || msg.caption || '';
+
+            if (fromNumber && text) {
+              console.log(`💬 WhatsApp de ${fromNumber}: ${text}`);
+              const aiReply = await getGeminiReply(text);
+              await sendWhatsAppMessage(fromNumber, aiReply);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Mensajes de Instagram / Facebook
+    if (body.object === 'instagram' || body.object === 'page') {
+      for (const entry of body.entry || []) {
+        if (entry.messaging) {
+          for (const msgEvent of entry.messaging) {
+            const senderId = msgEvent.sender?.id;
+            const text = msgEvent.message?.text;
+            if (senderId && text && !msgEvent.message?.is_echo) {
+              console.log(`💬 DM de Instagram/Facebook (${senderId}): ${text}`);
+              const aiReply = await getGeminiReply(text);
+              await sendMetaDM(senderId, aiReply);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error procesando webhook:', err.message);
   }
 });
 
-async function startBot() {
-  const authDir = 'baileys_auth_info';
-  const { state, saveCreds } = await useMultiFileAuthState(authDir);
-
-  waSock = makeWASocket({
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false
-  });
-
-  waSock.ev.on('creds.update', saveCreds);
-
-  waSock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      currentQR = qr;
-      isConnected = false;
-      addLog('📲 Nuevo QR limpio listo para escanear');
-    }
-    if (connection === 'open') {
-      isConnected = true;
-      currentQR = '';
-      addLog('✅ WhatsApp Conectado y Listo!');
-    }
-    if (connection === 'close') {
-      isConnected = false;
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      addLog(`Conexión cerrada: ${statusCode}, reconectando...`);
-      if (shouldReconnect) {
-        setTimeout(startBot, 2000);
-      } else {
-        // Limpiar sesión si se cerró sesión
-        try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) {}
-        setTimeout(startBot, 2000);
-      }
-    }
-  });
-
-  waSock.ev.on('messages.upsert', async (m) => {
-    try {
-      const messagesList = m.messages || [];
-      for (const msg of messagesList) {
-        if (!msg || !msg.message) continue;
-
-        const from = msg.key.remoteJid;
-        if (!from || from.endsWith('@g.us')) continue;
-
-        const userText = msg.message.conversation ||
-                         msg.message.extendedTextMessage?.text ||
-                         msg.message.imageMessage?.caption || '';
-
-        if (!userText) continue;
-
-        if (!msg.key.fromMe) {
-          addLog(`💬 Cliente (${from}): ${userText}`);
-          const replyText = await generateAIReply(userText);
-          await waSock.sendMessage(from, { text: replyText });
-          addLog(`✅ IA respondió a ${from}`);
-        }
-      }
-    } catch (err) {
-      addLog(`Error respondiendo: ${err.message}`);
-    }
-  });
+// Enviar Mensaje de WhatsApp oficial mediante Meta Graph API
+async function sendWhatsAppMessage(to, message) {
+  if (!META_PAGE_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+    console.error("Falta META_PAGE_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID");
+    return;
+  }
+  try {
+    const url = `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+    const res = await axios.post(url, {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to,
+      type: "text",
+      text: { body: message }
+    }, {
+      headers: { "Authorization": `Bearer ${META_PAGE_ACCESS_TOKEN}` }
+    });
+    console.log(`✅ Respuesta enviada con éxito a WhatsApp ${to}`);
+    return res.data;
+  } catch (e) {
+    console.error("Error enviando WhatsApp:", e.response?.data || e.message);
+  }
 }
 
-async function generateAIReply(text) {
+// Enviar DM Meta (Instagram / Messenger)
+async function sendMetaDM(recipientId, message) {
+  if (!META_PAGE_ACCESS_TOKEN) return;
+  try {
+    const url = `https://graph.facebook.com/v21.0/me/messages?access_token=${META_PAGE_ACCESS_TOKEN}`;
+    await axios.post(url, {
+      recipient: { id: recipientId },
+      message: { text: message }
+    });
+    console.log(`✅ DM enviado con éxito a (${recipientId})`);
+  } catch (e) {
+    console.error("Error enviando Meta DM:", e.response?.data || e.message);
+  }
+}
+
+async function getGeminiReply(userText) {
   if (!GEMINI_API_KEY) {
-    return "¡Hola! 😊 Gracias por escribir a Surva Social. Te ayudamos a escalar las ventas de tu negocio con Branding, Marketing Digital y Desarrollo Web de alto impacto. ¿En qué podemos ayudarte hoy?📲";
+    return `¡Hola! 😊 Gracias por comunicarte con Surva Social. Ofrecemos servicios de Branding, Marketing Digital, Diseño y Pautas Publicitarias para escalar tu negocio. ¿En qué podemos ayudarte hoy?📲`;
   }
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const response = await axios.post(url, {
+    const payload = {
       contents: [{
         parts: [{
-          text: `Eres Mila AI, la asesora virtual de la agencia Surva Social. Responde amablemente en español, en 2 párrafos cortos con emojis, promocionando los servicios de Branding, Marketing y Web. El usuario dice: "${text}"`
+          text: `Eres Mila AI, la asesora experta de la agencia Surva Social. Responde amablemente en español, máximo 2 párrafos cortos con emojis. Promociona los servicios de Branding, Ads y Desarrollo Web de Surva Social. El usuario pregunta: "${userText}"`
         }]
       }]
-    });
+    };
+    const response = await axios.post(url, payload);
     return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "¡Hola! 😊 En Surva Social te ayudamos a escalar tus ventas con branding y marketing de alto impacto. ¿En qué podemos ayudarte hoy?";
   } catch (e) {
     return "¡Hola! 😊 Bienvenido a Surva Social. ¿Cómo podemos ayudarte con la estrategia de tu marca hoy?";
   }
 }
 
-app.listen(PORT, () => {
-  console.log('Servidor en puerto ' + PORT);
-  startBot().catch(err => console.error('Error al iniciar bot:', err));
-});
+app.listen(PORT, () => console.log('Bot de IA Meta oficial activo en puerto ' + PORT));
