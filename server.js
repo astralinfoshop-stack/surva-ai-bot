@@ -13,8 +13,19 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 let currentQR = '';
 let isConnected = false;
 let waSock = null;
+const recentLogs = [];
+
+function addLog(msg) {
+  const time = new Date().toLocaleTimeString('es-US', { timeZone: 'America/New_York' });
+  recentLogs.unshift(`[${time}] ${msg}`);
+  if (recentLogs.length > 50) recentLogs.pop();
+}
 
 app.get('/', (req, res) => res.send('🤖 Surva Social WhatsApp AI Bot Activo 24/7'));
+
+app.get('/logs', (req, res) => {
+  res.json({ logs: recentLogs });
+});
 
 app.get('/qr', async (req, res) => {
   if (isConnected) {
@@ -70,6 +81,18 @@ app.get('/qr', async (req, res) => {
   }
 });
 
+function getMessageText(msg) {
+  if (!msg || !msg.message) return '';
+  const m = msg.message;
+  return m.conversation ||
+         m.extendedTextMessage?.text ||
+         m.imageMessage?.caption ||
+         m.videoMessage?.caption ||
+         m.ephemeralMessage?.message?.conversation ||
+         m.ephemeralMessage?.message?.extendedTextMessage?.text ||
+         '';
+}
+
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
 
@@ -86,18 +109,18 @@ async function startBot() {
     if (qr) {
       currentQR = qr;
       isConnected = false;
-      console.log('📲 QR listo para escanear en /qr');
+      addLog('📲 Nuevo QR listo para escanear');
     }
     if (connection === 'open') {
       isConnected = true;
       currentQR = '';
-      console.log('✅ WhatsApp Conectado con Éxito!');
+      addLog('✅ WhatsApp Conectado y Listo!');
     }
     if (connection === 'close') {
       isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`Conexión cerrada status: ${statusCode}, reconectando...`);
+      addLog(`Conexión cerrada status: ${statusCode}`);
       if (shouldReconnect) {
         setTimeout(startBot, 2000);
       }
@@ -108,27 +131,28 @@ async function startBot() {
     try {
       const messagesList = m.messages || [];
       for (const msg of messagesList) {
-        if (!msg || !msg.message) continue;
+        if (!msg) continue;
 
         const from = msg.key.remoteJid;
         if (!from || from.endsWith('@g.us')) continue;
 
-        const userText = msg.message.conversation ||
-                         msg.message.extendedTextMessage?.text ||
-                         msg.message.imageMessage?.caption || '';
+        const userText = getMessageText(msg);
+
+        addLog(`💬 Entrante de ${from} [fromMe=${msg.key.fromMe}]: "${userText}"`);
 
         if (!userText) continue;
 
-        // Responder a cualquier mensaje que NO empiece con la firma del bot "🤖"
+        // Responder si no empieza con la firma del bot
         if (!userText.trim().startsWith('🤖')) {
-          console.log(`💬 Procesando texto (${from}): ${userText}`);
           const replyText = await generateAIReply(userText);
+          
+          // Enviar respuesta al chat principal
           await waSock.sendMessage(from, { text: replyText });
-          console.log(`✅ IA respondió con éxito a ${from}`);
+          addLog(`✅ IA respondió con éxito a ${from}`);
         }
       }
     } catch (err) {
-      console.error(`Error en mensaje: ${err.message}`);
+      addLog(`Error en mensaje: ${err.message}`);
     }
   });
 }
