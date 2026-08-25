@@ -98,7 +98,12 @@ async function startBot() {
   waSock = makeWASocket({
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: false
+    printQRInTerminal: false,
+    syncFullHistory: false, // ¡No descargar historial viejo para atender inmediatamente mensajes nuevos!
+    markOnlineOnConnect: true,
+    getMessage: async (key) => {
+      return { conversation: 'Surva Social AI' };
+    }
   });
 
   waSock.ev.on('creds.update', saveCreds);
